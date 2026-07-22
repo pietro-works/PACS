@@ -1,0 +1,17 @@
+# macOS metadata
+.DS_Store
+.DS_Store?
+._*
+__MACOSX/
+
+# Backup files
+*.bak
+
+# Local Claude Code install — this repo dogfoods its own hooks.
+# Downloaders install from pacs-hooks/ instead (see pacs-hooks/INSTALL.md).
+.claude/
+
+# Local-only, not part of the public package
+.change-log.tsv
+purge_secret.sh
+push.sh
