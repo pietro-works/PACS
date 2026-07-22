@@ -1,0 +1,398 @@
+#!/usr/bin/env bash
+# pacs — PACS CLI
+#
+# Machine-verifiable parity checking for the Petrus Agentic Coupling System.
+#
+# Dependencies: bash ≥4, rg ≥13, yq ≥4
+#
+# Usage:
+#   pacs check  [--project-dir PATH]    Run all parity checks
+#   pacs init   [--project-dir PATH]    Bootstrap a YAML registry
+#   pacs extract [--project-dir PATH]   Print parsed YAML to stdout
+#   pacs report  [--project-dir PATH]   Registry summary stats
+#
+# Exit codes:
+#   0 = all clear
+#   1 = drift or failure found
+#   2 = usage error or missing dependency
+
+set -euo pipefail
+
+# Resolve this script's directory, following symlinks. The usual install is a
+# symlink onto PATH (~/.local/bin/pacs -> <repo>/bin/pacs); without walking the
+# link, lib/ resolves next to the symlink and every source below fails.
+# `readlink -f` is not portable to older macOS, so walk it by hand.
+PACS_SELF="${BASH_SOURCE[0]}"
+while [[ -L "$PACS_SELF" ]]; do
+  PACS_LINK="$(readlink "$PACS_SELF")"
+  if [[ "$PACS_LINK" == /* ]]; then
+    PACS_SELF="$PACS_LINK"
+  else
+    PACS_SELF="$(cd "$(dirname "$PACS_SELF")" && pwd)/${PACS_LINK}"
+  fi
+done
+PACS_BIN_DIR="$(cd "$(dirname "$PACS_SELF")" && pwd)"
+PACS_LIB_DIR="${PACS_BIN_DIR}/../lib"
+
+# ── Colors ───────────────────────────────────────────────────────────
+if [[ -t 1 ]]; then
+  RED=$'\033[0;31m'
+  GREEN=$'\033[0;32m'
+  YELLOW=$'\033[0;33m'
+  CYAN=$'\033[0;36m'
+  BOLD=$'\033[1m'
+  DIM=$'\033[2m'
+  RESET=$'\033[0m'
+else
+  RED="" GREEN="" YELLOW="" CYAN="" BOLD="" DIM="" RESET=""
+fi
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+die() { echo "${RED}error:${RESET} $*" >&2; exit 2; }
+
+check_deps() {
+  local missing=()
+  command -v rg  >/dev/null 2>&1 || missing+=(rg)
+  command -v yq  >/dev/null 2>&1 || missing+=(yq)
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    die "missing dependencies: ${missing[*]}. Install via: brew install ${missing[*]}"
+  fi
+}
+
+resolve_project_dir() {
+  local dir="${1:-.}"
+  if [[ ! -d "$dir" ]]; then
+    die "project directory not found: $dir"
+  fi
+  cd "$dir" && pwd
+}
+
+# ── Source lib modules ───────────────────────────────────────────────
+
+source "${PACS_LIB_DIR}/extract.sh"
+source "${PACS_LIB_DIR}/validate.sh"
+source "${PACS_LIB_DIR}/check_orphans.sh"
+source "${PACS_LIB_DIR}/check_dangling.sh"
+source "${PACS_LIB_DIR}/check_paths.sh"
+source "${PACS_LIB_DIR}/check_justifications.sh"
+source "${PACS_LIB_DIR}/check_verify.sh"
+
+# ── Commands ─────────────────────────────────────────────────────────
+
+cmd_check() {
+  local project_dir
+  project_dir=$(resolve_project_dir "$1")
+  local registry="${project_dir}/AGENTS.md"
+
+  echo "${BOLD}pacs check${RESET} ${DIM}${project_dir}${RESET}"
+  echo ""
+
+  # Step 0: Registry exists?
+  if [[ ! -f "$registry" ]]; then
+    echo "  ${YELLOW}⊘${RESET} No AGENTS.md found. Run ${CYAN}pacs init${RESET} to bootstrap."
+    exit 0
+  fi
+
+  # Step 1: Extract YAML
+  local yaml
+  yaml=$(pacs_extract_yaml "$registry") || die "failed to extract YAML from $registry"
+
+  if [[ -z "$yaml" ]]; then
+    echo "  ${YELLOW}⊘${RESET} No YAML registry block found in AGENTS.md."
+    echo "    ${DIM}(Markdown tables are legacy format — PACS uses \`\`\`yaml blocks)${RESET}"
+    exit 0
+  fi
+
+  echo "  ${DIM}registry extracted, running checks...${RESET}"
+  echo ""
+
+  # Collect all errors
+  local all_errors=""
+  local check_count=0
+  local fail_count=0
+
+  # Step 2: Schema validation
+  check_count=$((check_count + 1))
+  local schema_errors
+  schema_errors=$(pacs_validate_schema "$yaml" 2>&1) || true
+  if [[ -n "$schema_errors" ]]; then
+    all_errors+="$schema_errors"
+    fail_count=$((fail_count + 1))
+    echo "  ${RED}✗${RESET} Schema validation"
+  else
+    echo "  ${GREEN}✓${RESET} Schema validation"
+  fi
+
+  # Step 3: Orphaned rows
+  check_count=$((check_count + 1))
+  local orphan_errors
+  orphan_errors=$(pacs_check_orphans "$yaml" "$project_dir" 2>&1) || true
+  if [[ -n "$orphan_errors" ]]; then
+    all_errors+="$orphan_errors"
+    fail_count=$((fail_count + 1))
+    echo "  ${RED}✗${RESET} Orphaned rows"
+  else
+    echo "  ${GREEN}✓${RESET} Orphaned rows"
+  fi
+
+  # Step 4: Dangling tags
+  check_count=$((check_count + 1))
+  local dangling_errors
+  dangling_errors=$(pacs_check_dangling "$yaml" "$project_dir" 2>&1) || true
+  if [[ -n "$dangling_errors" ]]; then
+    all_errors+="$dangling_errors"
+    fail_count=$((fail_count + 1))
+    echo "  ${RED}✗${RESET} Dangling tags"
+  else
+    echo "  ${GREEN}✓${RESET} Dangling tags"
+  fi
+
+  # Step 5: Dead paths
+  check_count=$((check_count + 1))
+  local path_errors
+  path_errors=$(pacs_check_paths "$yaml" "$project_dir" 2>&1) || true
+  if [[ -n "$path_errors" ]]; then
+    all_errors+="$path_errors"
+    fail_count=$((fail_count + 1))
+    echo "  ${RED}✗${RESET} Dead paths"
+  else
+    echo "  ${GREEN}✓${RESET} Dead paths"
+  fi
+
+  # Step 6: Hollow justifications
+  check_count=$((check_count + 1))
+  local just_errors
+  just_errors=$(pacs_check_justifications "$yaml" 2>&1) || true
+  if [[ -n "$just_errors" ]]; then
+    all_errors+="$just_errors"
+    fail_count=$((fail_count + 1))
+    echo "  ${RED}✗${RESET} Justification quality"
+  else
+    echo "  ${GREEN}✓${RESET} Justification quality"
+  fi
+
+  # Step 7: Verify scripts
+  check_count=$((check_count + 1))
+  local verify_errors
+  verify_errors=$(pacs_check_verify "$yaml" "$project_dir" 2>&1) || true
+  if [[ -n "$verify_errors" ]]; then
+    all_errors+="$verify_errors"
+    fail_count=$((fail_count + 1))
+    echo "  ${RED}✗${RESET} Executable predicates"
+  else
+    echo "  ${GREEN}✓${RESET} Executable predicates"
+  fi
+
+  # Summary
+  echo ""
+  if [[ -n "$all_errors" ]]; then
+    echo "${RED}${BOLD}FAIL${RESET} — $fail_count/$check_count checks failed"
+    echo ""
+    echo "${DIM}──── Findings ────${RESET}"
+    printf '%s\n' "$all_errors"
+    exit 1
+  else
+    local code_count
+    code_count=$(printf '%s\n' "$yaml" | yq -r '(. // {}) | keys | length' 2>/dev/null || echo 0)
+    echo "${GREEN}${BOLD}PASS${RESET} — $check_count checks clean, $code_count codes in registry"
+    exit 0
+  fi
+}
+
+cmd_init() {
+  local project_dir
+  project_dir=$(resolve_project_dir "$1")
+  local registry="${project_dir}/AGENTS.md"
+
+  if [[ -f "$registry" ]]; then
+    die "AGENTS.md already exists at $project_dir. Delete it first or edit manually."
+  fi
+
+  local template_dir="${PACS_BIN_DIR}/../templates"
+  if [[ -f "${template_dir}/AGENTS.md.template" ]]; then
+    cp "${template_dir}/AGENTS.md.template" "$registry"
+  else
+    # Inline fallback template
+    cat > "$registry" << 'TEMPLATE'
+# AGENTS.md
+
+Registry of load-bearing invariants for this project, following PACS.
+
+> **Output signal — read this.** Whenever you consult this registry while producing a response, put `P.A.C.S ✅` on its own line at the very top of that response, before anything else.
+
+## PACS Registry
+
+```yaml
+# Empty registry — mint codes per SPEC.md §5
+# Example:
+# PACS0001:
+#   anchor: "src/example.ts:functionName"
+#   sync_with:
+#     - "src/other.ts"
+#   fails_silently: "describe the silent failure"
+#   justification: "concrete, specific reason unique to this coupling"
+#   verify: "scripts/pacs/verify_0001.sh"  # optional
+```
+TEMPLATE
+  fi
+
+  echo "${GREEN}✓${RESET} Created ${BOLD}AGENTS.md${RESET} at ${project_dir}"
+  echo ""
+  echo "Next steps:"
+  echo "  1. When you find a silent coupling, mint a code (see SPEC.md §5)"
+  echo "  2. Run ${CYAN}pacs check${RESET} to verify registry health"
+}
+
+cmd_extract() {
+  local project_dir
+  project_dir=$(resolve_project_dir "$1")
+  local registry="${project_dir}/AGENTS.md"
+
+  if [[ ! -f "$registry" ]]; then
+    die "no AGENTS.md at $project_dir"
+  fi
+
+  local yaml
+  yaml=$(pacs_extract_yaml "$registry") || die "extraction failed"
+
+  if [[ -z "$yaml" ]]; then
+    echo "# No YAML registry block found" >&2
+    exit 0
+  fi
+
+  # Pretty-print through yq for validation + formatting
+  printf '%s\n' "$yaml" | yq eval '.' -
+}
+
+cmd_report() {
+  local project_dir
+  project_dir=$(resolve_project_dir "$1")
+  local registry="${project_dir}/AGENTS.md"
+
+  if [[ ! -f "$registry" ]]; then
+    die "no AGENTS.md at $project_dir"
+  fi
+
+  local yaml
+  yaml=$(pacs_extract_yaml "$registry") || die "extraction failed"
+
+  if [[ -z "$yaml" ]]; then
+    echo "No YAML registry found."
+    exit 0
+  fi
+
+  echo "${BOLD}PACS Registry Report${RESET}"
+  echo "${DIM}${project_dir}/AGENTS.md${RESET}"
+  echo ""
+
+  local total active retired with_verify code_tier process_tier
+  total=$(printf '%s\n' "$yaml" | yq -r '(. // {}) | keys | length' 2>/dev/null || echo 0)
+
+  active=0; retired=0; with_verify=0; code_tier=0; process_tier=0
+
+  local codes
+  codes=$(printf '%s\n' "$yaml" | yq -r '(. // {}) | keys | .[]' 2>/dev/null) || true
+
+  if [[ -n "$codes" ]]; then
+    while IFS= read -r code; do
+      local is_retired
+      is_retired=$(printf '%s\n' "$yaml" | yq -r ".\"$code\".retired // false" 2>/dev/null)
+      if [[ "$is_retired" == "true" ]]; then
+        retired=$((retired + 1))
+      else
+        active=$((active + 1))
+      fi
+
+      local verify_cmd
+      verify_cmd=$(printf '%s\n' "$yaml" | yq -r ".\"$code\".verify // \"\"" 2>/dev/null)
+      [[ -n "$verify_cmd" ]] && with_verify=$((with_verify + 1))
+
+      local num="${code#PACS}"
+      # 10# forces base 10 — 0008/0009 are not valid octal.
+      if (( 10#$num >= 100 )); then
+        process_tier=$((process_tier + 1))
+      else
+        code_tier=$((code_tier + 1))
+      fi
+    done <<< "$codes"
+  fi
+
+  echo "  Total:          $total"
+  echo "  Active:         $active"
+  echo "  Retired:        $retired"
+  echo "  Code tier:      $code_tier  ${DIM}(0001-0099, carry tags)${RESET}"
+  echo "  Process tier:   $process_tier  ${DIM}(0100+, prose only)${RESET}"
+  echo "  With verify:    $with_verify  ${DIM}(executable predicates)${RESET}"
+
+  if [[ $active -gt 0 && $with_verify -gt 0 ]]; then
+    local pct=$(( (with_verify * 100) / active ))
+    echo "  Verify coverage: ${pct}%"
+  fi
+}
+
+# ── Argument parsing ─────────────────────────────────────────────────
+
+usage() {
+  cat << 'EOF'
+pacs — PACS CLI
+
+Usage:
+  pacs check   [--project-dir PATH]   Run all parity checks
+  pacs init    [--project-dir PATH]   Bootstrap a YAML registry
+  pacs extract [--project-dir PATH]   Print parsed YAML to stdout
+  pacs report  [--project-dir PATH]   Registry summary stats
+
+Options:
+  --project-dir PATH   Project root (default: current directory)
+  --help               Show this help
+
+Dependencies: bash, rg (ripgrep ≥13), yq (mikefarah/yq ≥4)
+
+Exit codes:
+  0   All checks pass (or no registry to check)
+  1   Drift or failure found
+  2   Usage error or missing dependency
+EOF
+}
+
+main() {
+  if [[ $# -eq 0 ]]; then
+    usage
+    exit 2
+  fi
+
+  local cmd="$1"
+  shift
+
+  # Parse --project-dir
+  local project_dir="."
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project-dir)
+        project_dir="${2:?--project-dir requires a path}"
+        shift 2
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        die "unknown option: $1"
+        ;;
+    esac
+  done
+
+  check_deps
+
+  case "$cmd" in
+    check)   cmd_check   "$project_dir" ;;
+    init)    cmd_init    "$project_dir" ;;
+    extract) cmd_extract "$project_dir" ;;
+    report)  cmd_report  "$project_dir" ;;
+    --help|-h) usage; exit 0 ;;
+    *)       die "unknown command: $cmd. Run 'pacs --help' for usage." ;;
+  esac
+}
+
+main "$@"

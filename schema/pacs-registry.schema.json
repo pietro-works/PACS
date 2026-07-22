@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PACS Registry",
+  "description": "Schema for the YAML registry block inside AGENTS.md. Each top-level key is a PACS code (PACS0001, PACS0002, etc.) mapping to its invariant definition.",
+  "type": "object",
+  "patternProperties": {
+    "^PACS[0-9]{4}$": {
+      "type": "object",
+      "required": ["anchor", "sync_with", "fails_silently", "justification"],
+      "properties": {
+        "anchor": {
+          "type": "string",
+          "description": "File and symbol where the tag lives, e.g. 'src/engine.js:UNITS'",
+          "minLength": 1
+        },
+        "sync_with": {
+          "type": "array",
+          "description": "Every distant touch-point that has to change together",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "fails_silently": {
+          "type": "string",
+          "description": "The concrete wrong behavior if the coupling is missed",
+          "minLength": 1
+        },
+        "justification": {
+          "type": "string",
+          "description": "One sentence, concrete, naming the actual consequence. Must be specific to this coupling.",
+          "minLength": 21
+        },
+        "verify": {
+          "type": "string",
+          "description": "Optional executable predicate. Path to a script (relative to project root). Exit 0 = pass, non-zero = fail."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Optional classification: registry, message-contract, constant, convention, determinism"
+        },
+        "retired": {
+          "type": "boolean",
+          "description": "Set to true when the invariant is removed. The code number is never reused.",
+          "default": false
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional freeform notes"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

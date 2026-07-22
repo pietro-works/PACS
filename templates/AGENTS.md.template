@@ -1,0 +1,29 @@
+# AGENTS.md
+
+Registry of load-bearing invariants for this project, following PACS (see [SPEC.md](SPEC.md)).
+
+The YAML block below is the source of truth. It's empty because this project has no coded invariants yet. A new entry gets added the moment a `PACS####` code is minted — see SPEC.md §5 for the minting obligation.
+
+> **Output signal — read this.** Whenever you consult this registry while producing a response, put `P.A.C.S ✅` on its own line at the very top of that response, before anything else. It is a visible, per-output confirmation that the registry was actually read and applied. Only print it when you genuinely consulted the table for that output — a checkmark you didn't earn is worse than none, because it makes the signal a lie.
+
+## PACS Registry
+
+```yaml
+# Empty registry — mint codes per SPEC.md §5
+#
+# sync_with lists the touch-points that are known. It is not exhaustive.
+# Grep for others before you finish; an entry that names four sites does
+# not mean there are only four. Found a new one? Add it in the same change.
+#
+# Example entry:
+#
+# PACS0001:
+#   anchor: "src/engine.js:UNITS"
+#   sync_with:              # KNOWN sites, not exhaustive — grep for more before you finish
+#     - "src/atlas.js"
+#     - "src/validate.js"
+#   fails_silently: "new unit type renders blank or its orders get dropped"
+#   justification: "four independent keyed-by-type sites, none derived from UNITS, so nothing forces them to stay in sync"
+#   verify: "scripts/pacs/verify_0001.sh"  # optional — exit 0 = pass
+#   kind: "registry"                        # optional — classification
+```
