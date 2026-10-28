@@ -20,9 +20,11 @@ edit after a compaction resets things — without a real `Read` tool call on
 
 ## Install globally (one wiring, every project)
 
-The scripts resolve the project from the hook payload's `cwd`, so they work
-from wherever they live. Point `~/.claude/settings.json` at this folder and
-every project on the machine is gated:
+Run in place, the scripts find the project by climbing from the hook payload's
+`cwd` to the nearest `AGENTS.md` that has registry entries (stopping at the
+repo's `.git`), so a session that has `cd`'d into a subfolder still gates the
+same project. Point `~/.claude/settings.json` at this folder and every project
+on the machine is gated:
 
 ```json
 "SessionStart": [{"hooks": [{"type": "command", "command": "/abs/path/to/pacs-hooks/hooks/pacs-reset-marker.sh"}]}],
@@ -104,13 +106,22 @@ Two behaviors worth knowing:
   are allowed without a read. This is what stops a fresh or empty repo from
   deadlocking every edit behind a ritual read of an empty file. The gate only
   bites once the registry actually has entries.
-- **It does not depend on `CLAUDE_PROJECT_DIR`.** Some entrypoints (the
-  desktop app / Cowork) leave that variable empty, which used to silently
-  disable the whole gate — the paths resolved to `/`, the enforce hook found
-  no registry, and it failed open without ever blocking. Each script now takes
-  the project root from the hook payload's `cwd`, and falls back to its own
-  location (`../..` from `.claude/hooks/`) when the payload has none. That is
-  what lets one copy serve both installs: per-project, where the script's path
-  identifies the project, and global, where only the payload can. If neither
-  resolves to a directory holding a registry, the gate no-ops — it can never
-  wrongly block an edit.
+- **It does not depend on `CLAUDE_PROJECT_DIR`, and it follows `cd`.** Some
+  entrypoints (the desktop app / Cowork) leave that variable empty, and Claude
+  Code's payload `cwd` moves when the session runs `cd` in Bash. So all three
+  scripts find the project the same way. Installed under
+  `<project>/.claude/hooks/` next to that project's `AGENTS.md`, the project is
+  that one, always. Anywhere else (a global install run in place), the script
+  climbs from the payload's `cwd` to the nearest `AGENTS.md` with registry
+  entries, so the reset, read and edit hooks agree on the project and the
+  marker wherever in the project the session is. The climb stops after the
+  first folder holding a `.git`. If nothing is found the gate does nothing.
+  It deliberately does not fall back to the folder the scripts live in: for a
+  global install that is this repo, and gating every other project on this
+  repo's registry would block them all the moment it gained an entry.
+- **The gate keys on `cwd`, not on the file being edited.** An agent that
+  `cd`s out of a project before editing it walks past the gate, and a nested
+  repo or worktree with its own `.git` is a project of its own.
+- **The marker is per project, not per session.** Two sessions in one project
+  share it: one session's read unlocks the other, and one session's
+  `SessionStart` clears it for both.

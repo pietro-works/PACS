@@ -30,7 +30,7 @@ MARKER="$PROJ/.claude/.pacs-registry-read"
 # A PATH with the tools the hooks need but NO realpath (macOS 12 and older).
 NOREAL="$REAL/bin-norealpath"
 mkdir -p "$NOREAL"
-for t in jq dirname basename mkdir date cat rm; do
+for t in jq grep dirname basename mkdir date cat rm; do
   p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$NOREAL/$t"
 done
 
