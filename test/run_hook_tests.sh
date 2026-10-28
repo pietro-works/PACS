@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Hook tests: marker logic of the three read-enforcement hooks.
 # Needs jq. Set PACS_HOOKS_DIR to test another copy of the scripts.
+# The registry fixtures below hold backticks on purpose, so single quotes are right.
+# shellcheck disable=SC2016
 set -uo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
