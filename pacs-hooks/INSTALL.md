@@ -92,7 +92,10 @@ Two behaviors worth knowing:
 - **Only this project's registry satisfies the gate.** `pacs-mark-read.sh`
   matches the exact path `${PROJECT_DIR}/AGENTS.md`, not any file that
   ends in `AGENTS.md`. Reading a global `~/.claude/AGENTS.md` or another
-  repo's registry will *not* clear the block. If your registry lives in a
+  repo's registry will *not* clear the block. Both paths are normalized
+  before they are compared, so `//`, `..` and a symlinked prefix (macOS's
+  `/tmp` is really `/private/tmp`) still count as the same file, while a path
+  containing a newline never does. If your registry lives in a
   different file, change the `REGISTRY` variable in both
   `pacs-mark-read.sh` and `pacs-enforce-read.sh`.
 - **It fails open when there's nothing to read.** If `AGENTS.md` doesn't
