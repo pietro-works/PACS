@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Hook tests for pacs-gate.sh and its three wrappers.
 # Needs jq. Set PACS_HOOKS_DIR to test another copy of the scripts.
-# The registry fixtures hold backticks on purpose, so single quotes are right.
-# shellcheck disable=SC2016
+# The registry fixtures hold backticks on purpose, so single quotes are right,
+# and mk() takes its printf format from the fixture text on purpose.
+# shellcheck disable=SC2016,SC2059
 set -uo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -106,7 +107,11 @@ expect "This session's start (or compaction) clears its reads"                  
 reset; mark "$R/p/AGENTS.md"
 expect "A subagent (same session id) shares the session's reads"                   0 "$(run pacs-enforce-read.sh s1 "$R/p" "$R/p/sub/a.js" '{"agent_id":"a1"}')"
 expect "An odd session id cannot escape the state folder" 2 "$(edit "$R/p/sub/a.js" "$R/p" '../../x')"
-[ ! -e "$R/x" ] && [ -z "$(find "$R/state" -type f ! -name 'read-*')" ] && pass "State files stay inside the state folder" || fail "State file written outside the state folder"
+if [ ! -e "$R/x" ] && [ -z "$(find "$R/state" -type f ! -name 'read-*')" ]; then
+  pass "State files stay inside the state folder"
+else
+  fail "State file written outside the state folder"
+fi
 
 echo "=== Gate: failing open ==="
 expect "No file_path: allowed"                                                     0 "$(edit "")"
