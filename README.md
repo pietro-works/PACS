@@ -121,9 +121,9 @@ Use `//` in most code, `/* */` inside CSS or template strings, `<!-- -->` in mar
 
 PACS starts with zero dependencies. At its simplest, it is just `AGENTS.md` and `SPEC.md` interpreted directly by your agent. 
 
-If you want automated verification, run `bin/pacs check` in your workspace or CI to catch dead paths and execute custom test scripts. If you use Claude Code and want pre-tool enforcement, `pacs-hooks/` provides optional middleware that blocks file edits until the registry is read. 
+If you want automated checks, run `bin/pacs check` in your workspace or CI. It catches dead paths, entries whose tag is gone and tags with no entry. If you use Claude Code, put `@AGENTS.md` in the project's `CLAUDE.md` so the registry loads with every session. `pacs-hooks/` goes one step further and blocks an edit until the registry governing that file has been read.
 
-The linter runs only what you configure. If you have no verification scripts, it checks the YAML schema and tags. If you do not use Claude Code, you can ignore the hooks folder completely.
+If you do not use Claude Code, you can ignore the hooks folder completely.
 
 The full rules for minting and checking are in [SPEC.md](SPEC.md). It fits on one screen.
 

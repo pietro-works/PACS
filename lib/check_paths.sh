@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# pacs2_alpha/lib/check_paths.sh — Detect dead sync_with paths
+# lib/check_paths.sh — Detect dead anchor and sync_with paths
 #
-# For each entry in the registry, verify that every path listed in
-# sync_with actually exists on disk. A missing path means a refactor
-# moved or deleted the file without updating the registry.
+# Every anchor and sync_with item of a live entry must name a file that exists.
+# Text after the first colon is a symbol ("src/a.js:UNITS" checks src/a.js),
+# and an item holding <...> is a placeholder ("runs/<run>/rubric.md"): skipped.
 #
 # Usage:
 #   source lib/check_paths.sh
@@ -14,47 +14,17 @@ set -euo pipefail
 pacs_check_paths() {
   local yaml="${1:?Usage: pacs_check_paths <yaml> <project-dir>}"
   local project_dir="${2:?}"
-  local errors=""
+  local errors="" where item file items
 
-  local codes
-  codes=$(printf '%s\n' "$yaml" | yq -r '(. // {}) | keys | .[]' 2>/dev/null) || return 0
+  items=$(printf '%s\n' "$yaml" | yq -r '(. // {}) | to_entries[] | select(.value.retired != true) | .key as $k
+    | (($k + ".anchor\t" + (.value.anchor // "")), ((.value.sync_with // [])[] | $k + ".sync_with\t" + .))' 2>/dev/null) || return 0
 
-  [[ -z "$codes" ]] && return 0
-
-  while IFS= read -r code; do
-    # Skip retired entries
-    local retired
-    retired=$(printf '%s\n' "$yaml" | yq -r ".\"$code\".retired // false" 2>/dev/null)
-    [[ "$retired" == "true" ]] && continue
-
-    # Get sync_with paths
-    local paths
-    paths=$(printf '%s\n' "$yaml" | yq -r ".\"$code\".sync_with | .[]" 2>/dev/null) || true
-
-    [[ -z "$paths" ]] && continue
-
-    while IFS= read -r path; do
-      [[ -z "$path" ]] && continue
-
-      # Resolve relative to project dir
-      local full_path="${project_dir%/}/${path}"
-
-      if [[ ! -e "$full_path" ]]; then
-        errors+="  DEAD_PATH: $code.sync_with references '$path' but file not found"$'\n'
-      fi
-    done <<< "$paths"
-
-    # Also check anchor path (extract file part before the colon)
-    local anchor
-    anchor=$(printf '%s\n' "$yaml" | yq -r ".\"$code\".anchor // \"\"" 2>/dev/null)
-    if [[ -n "$anchor" ]]; then
-      local anchor_file="${anchor%%:*}"  # Strip :symbol part
-      local anchor_full="${project_dir%/}/${anchor_file}"
-      if [[ -n "$anchor_file" && ! -e "$anchor_full" ]]; then
-        errors+="  DEAD_PATH: $code.anchor references '$anchor_file' but file not found"$'\n'
-      fi
-    fi
-  done <<< "$codes"
+  while IFS=$'\t' read -r where item; do
+    [[ -z "$item" || "$item" == *"<"* ]] && continue
+    file="${item%%:*}"
+    [[ -z "$file" || -e "${project_dir%/}/${file}" ]] && continue
+    errors+="  DEAD_PATH: $where references '$file' but file not found"$'\n'
+  done <<< "$items"
 
   if [[ -n "$errors" ]]; then
     printf '%s' "$errors"

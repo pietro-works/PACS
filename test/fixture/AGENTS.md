@@ -13,7 +13,6 @@ PACS0001:
     - "src/atlas.js"
   fails_silently: "new unit type renders blank"
   justification: "four independent keyed-by-type sites, none derived from UNITS, so nothing forces them to stay in sync"
-  verify: "scripts/verify_pass.sh"
   kind: "registry"
 
 PACS0002:
@@ -31,10 +30,8 @@ PACS0003:
   justification: "this is important"
 
 PACS0004:
-  anchor: "src/engine.js:VERIFY_FAIL"
-  sync_with:
-    - "src/atlas.js"
-  fails_silently: "verify script fails"
-  justification: "the lookup fails closed with no error path, so a missing key and a muted cue are indistinguishable"
-  verify: "scripts/verify_fail.sh"
+  anchor: "src/moved.js:THING"
+  sync_with: []
+  fails_silently: "the anchor file was renamed and nothing noticed"
+  justification: "an entry with no sync_with sites still has an anchor that must exist"
 ```

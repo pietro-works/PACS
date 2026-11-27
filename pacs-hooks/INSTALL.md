@@ -1,127 +1,39 @@
-# Installing the PACS read-enforcement hooks
+# Installing the PACS read gate
 
-Three files, one config block. This is the harness-level fix from the SPEC.md
-section 0 disclaimer: it doesn't make the model remember to read AGENTS.md,
-it makes editing impossible until it does.
+The gate makes an edit impossible until the registry that governs the edited file has been read in full. It doesn't make the model use what it read; it makes sure the text was in front of it.
 
 ## What it does
 
-- `pacs-reset-marker.sh` (`SessionStart`, every source: startup, resume,
-  clear, fork, **and compact**) deletes a marker file.
-- `pacs-mark-read.sh` (`PostToolUse` on `Read`) recreates that marker the
-  moment Claude actually reads `AGENTS.md`.
-- `pacs-enforce-read.sh` (`PreToolUse` on `Edit|Write|MultiEdit`) blocks the
-  tool call with exit code 2 if the marker isn't there, and tells Claude
-  exactly what to do about it.
+All logic lives in `hooks/pacs-gate.sh`. The three `pacs-*.sh` files next to it are two-line wrappers that call it with a mode, so existing settings keep working.
 
-Net effect: Claude cannot edit a file — in this session, or in the first
-edit after a compaction resets things — without a real `Read` tool call on
-`AGENTS.md` happening first. Not a claim in a report line. An actual call.
+- **reset** (`SessionStart`, every source, including compaction) forgets what the session has read.
+- **mark** (`PostToolUse` on `Read`) remembers a registry once it has been read in full.
+- **enforce** (`PreToolUse` on `Edit|Write|MultiEdit`) exits 2 while the governing registry is unread, and names the file to read.
 
-## Install globally (one wiring, every project)
+The governing registry of a file is the nearest `AGENTS.md` with at least one `PACS####:` entry at or above it. The climb stops at the first folder holding `.git`, so a nested repo or worktree is its own project. A file with no governing registry is never gated, and neither is a project whose registry is empty.
 
-Run in place, the scripts find the project by climbing from the hook payload's
-`cwd` to the nearest `AGENTS.md` that has registry entries (stopping at the
-repo's `.git`), so a session that has `cd`'d into a subfolder still gates the
-same project. Point `~/.claude/settings.json` at this folder and every project
-on the machine is gated:
+A read counts only when it returned the whole file: it started at line 1, returned every line, and was not cut by the token cap. If the payload has no response details, a read with `limit` or `offset` does not count.
+
+Reads are remembered per session id, in `~/.cache/pacs/read-<session id>` (set `PACS_STATE_DIR` to move it). Nothing is written inside projects.
+
+## Install
+
+Point `~/.claude/settings.json` at the scripts, run in place:
 
 ```json
-"SessionStart": [{"hooks": [{"type": "command", "command": "/abs/path/to/pacs-hooks/hooks/pacs-reset-marker.sh"}]}],
-"PostToolUse":  [{"matcher": "Read", "hooks": [{"type": "command", "command": "/abs/path/to/pacs-hooks/hooks/pacs-mark-read.sh"}]}],
-"PreToolUse":   [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": "/abs/path/to/pacs-hooks/hooks/pacs-enforce-read.sh"}]}]
+"SessionStart": [{"hooks": [{"type": "command", "command": "bash \"/abs/path/to/pacs-hooks/hooks/pacs-reset-marker.sh\""}]}],
+"PostToolUse":  [{"matcher": "Read", "hooks": [{"type": "command", "command": "bash \"/abs/path/to/pacs-hooks/hooks/pacs-mark-read.sh\""}]}],
+"PreToolUse":   [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": "bash \"/abs/path/to/pacs-hooks/hooks/pacs-enforce-read.sh\""}]}]
 ```
 
-Merge at the event level if you already have hooks there. A project with no
-`AGENTS.md`, or one whose registry has no entries, is untouched — the gate
-exits 0 before doing anything. So a global wiring costs nothing in projects
-that don't use PACS.
+Merge at the event level if you already have hooks there. Calling through `bash` means the scripts don't need an executable bit, which some synced folders drop. The gate needs `jq`; without it every call is allowed.
 
-## Install per project
+To check it, edit a file in a project with registry entries before reading `AGENTS.md`. The edit is refused with a message naming the registry. Read it, retry, and the edit goes through.
 
-1. Copy the three scripts into your project:
+## Known gaps
 
-   ```
-   your-project/.claude/hooks/pacs-reset-marker.sh
-   your-project/.claude/hooks/pacs-mark-read.sh
-   your-project/.claude/hooks/pacs-enforce-read.sh
-   ```
-
-2. Make them executable:
-
-   ```
-   chmod +x your-project/.claude/hooks/pacs-*.sh
-   ```
-
-3. Merge the contents of `settings.json` into
-   `your-project/.claude/settings.json`. If you already have a `hooks` block
-   (for a formatter, a linter, etc.), merge at the event level — add these
-   three event entries alongside whatever you already have, don't overwrite
-   the file wholesale.
-
-4. Requires `jq` on your machine (used by `pacs-mark-read.sh` to parse the
-   tool-call JSON). Most systems have it; if not, `brew install jq` /
-   `apt install jq`.
-
-5. Restart or start a new Claude Code session in the project. Try editing a
-   file before reading `AGENTS.md` — you should see the edit get blocked
-   with the PACS0100 message. Read `AGENTS.md`, then the next edit goes
-   through.
-
-## Known gaps, stated plainly
-
-- **This only gates `Edit`, `Write`, and `MultiEdit`.** If Claude modifies a
-  file through `Bash` instead (a heredoc, `sed -i`, sending output through
-  `>`), this hook doesn't see it, because it isn't one of the matched tool
-  names. Claude Code's default behavior favors the file-editing tools for
-  this, so it's a real but secondary gap. If you find your agent routing
-  around it through Bash, the fix is a second `PreToolUse` hook matched to
-  `Bash` with an `if` filter on write-shaped subcommands, at the cost of
-  more false positives to tune.
-- **This doesn't gate planning.** Section 0 also asks for a read before
-  *planning*, not just before edits — a hook can't block "Claude is about
-  to reason about an approach," only actual tool calls. The hook closes the
-  half of the gap that has teeth (code doesn't change without a read); the
-  planning half is still a prose convention, same as the rest of the spec.
-- **The marker is file-existence, not content-hash.** It records "AGENTS.md
-  was read," not "AGENTS.md was read *and the model actually used what it
-  found*." That second half was never mechanically enforceable and isn't
-  claimed here — real enforcement of *use* is the report line (SPEC §7) and
-  the parity check (§9), which are human-auditable, not the hook.
-
-Two behaviors worth knowing:
-
-- **Only this project's registry satisfies the gate.** `pacs-mark-read.sh`
-  matches the exact path `${PROJECT_DIR}/AGENTS.md`, not any file that
-  ends in `AGENTS.md`. Reading a global `~/.claude/AGENTS.md` or another
-  repo's registry will *not* clear the block. Both paths are normalized
-  before they are compared, so `//`, `..` and a symlinked prefix (macOS's
-  `/tmp` is really `/private/tmp`) still count as the same file, while a path
-  containing a newline never does. If your registry lives in a
-  different file, change the `REGISTRY` variable in both
-  `pacs-mark-read.sh` and `pacs-enforce-read.sh`.
-- **It fails open when there's nothing to read.** If `AGENTS.md` doesn't
-  exist yet, or its registry has zero entries — no `PACS####:` key in the
-  YAML block, and no data rows if it's still a legacy markdown table — edits
-  are allowed without a read. This is what stops a fresh or empty repo from
-  deadlocking every edit behind a ritual read of an empty file. The gate only
-  bites once the registry actually has entries.
-- **It does not depend on `CLAUDE_PROJECT_DIR`, and it follows `cd`.** Some
-  entrypoints (the desktop app / Cowork) leave that variable empty, and Claude
-  Code's payload `cwd` moves when the session runs `cd` in Bash. So all three
-  scripts find the project the same way. Installed under
-  `<project>/.claude/hooks/` next to that project's `AGENTS.md`, the project is
-  that one, always. Anywhere else (a global install run in place), the script
-  climbs from the payload's `cwd` to the nearest `AGENTS.md` with registry
-  entries, so the reset, read and edit hooks agree on the project and the
-  marker wherever in the project the session is. The climb stops after the
-  first folder holding a `.git`. If nothing is found the gate does nothing.
-  It deliberately does not fall back to the folder the scripts live in: for a
-  global install that is this repo, and gating every other project on this
-  repo's registry would block them all the moment it gained an entry.
-- **The gate keys on `cwd`, not on the file being edited.** An agent that
-  `cd`s out of a project before editing it walks past the gate, and a nested
-  repo or worktree with its own `.git` is a project of its own.
-- **The marker is per project, not per session.** Two sessions in one project
-  share it: one session's read unlocks the other, and one session's
-  `SessionStart` clears it for both.
+- **Only `Edit`, `Write` and `MultiEdit` are gated.** A write through `Bash` (a heredoc, `sed -i`, a `>` redirect) is not seen.
+- **Planning isn't gated.** A hook can stop a tool call, not a line of reasoning.
+- **Reading isn't using.** The gate proves the registry was read, not that it was applied. The report line (SPEC §7) covers use.
+- **Subagents share the session.** A subagent carries its parent's session id, so it passes on the parent's read. A subagent's compaction fires `SessionStart` without an agent id, so it resets the whole session and the parent reads again.
+- **A typed `/command` doesn't pass through the tool hooks.** The next edit is still gated.

@@ -49,7 +49,8 @@ assert_output_contains() {
 echo "=== PACS Test Suite ==="
 echo ""
 
-# Test 1: Clean fixture should pass completely (exit 0)
+# Test 1: Clean fixture should pass completely (exit 0). Its sync_with holds a
+# file:symbol item and a <placeholder> item, which must not count as dead paths.
 assert_exit_code "Clean fixture passes all checks" 0 check --project-dir "${TEST_DIR}/fixture_clean"
 
 # Test 2: Fixture with issues should fail (exit 1)
@@ -64,11 +65,11 @@ assert_output_contains "Detects dangling tag PACS9999" "DANGLING: PACS9999" chec
 # Test 5: Fixture with issues reports dead path
 assert_output_contains "Detects dead path" "DEAD_PATH: PACS0002" check --project-dir "${TEST_DIR}/fixture"
 
-# Test 6: Fixture with issues reports hollow justification
-assert_output_contains "Detects hollow justification" "HOLLOW: PACS0003" check --project-dir "${TEST_DIR}/fixture"
+# Test 6: Fixture with issues reports a too-short justification
+assert_output_contains "Detects short justification" "SCHEMA: PACS0003.justification too short" check --project-dir "${TEST_DIR}/fixture"
 
-# Test 7: Fixture with issues reports verify failure
-assert_output_contains "Detects verify failure" "VERIFY: PACS0004 FAILED" check --project-dir "${TEST_DIR}/fixture"
+# Test 7: A missing anchor is reported even when sync_with is empty
+assert_output_contains "Detects dead anchor with empty sync_with" "DEAD_PATH: PACS0004.anchor" check --project-dir "${TEST_DIR}/fixture"
 
 # Test 8: pacs extract on clean fixture
 assert_output_contains "Extract command returns valid YAML key" "PACS0001:" extract --project-dir "${TEST_DIR}/fixture_clean"

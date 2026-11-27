@@ -12,13 +12,13 @@ Read it as a floor, not a ceiling. The registry tells you about couplings someon
 
 If there is no registry file yet, create `AGENTS.md` and bootstrap one.
 
-This read-first convention can be trusted to the agent natively (most agents will read `AGENTS.md` automatically), or enforced via optional `PreToolUse` hooks (see `pacs-hooks/`).
+In Claude Code, put `@AGENTS.md` in the project's `CLAUDE.md` so the registry loads with every session. The optional hooks in `pacs-hooks/` go further and block edits to a file until the registry that governs it has been read.
 
 ## 1. What earns a code
 
 A PACS code marks an invariant that has all three of these properties:
 - **Coupled.** Adding or changing one thing requires a matching change somewhere else.
-- **Distant.** That somewhere else is in another file, module, or process. 
+- **Distant.** That somewhere else is another function, file, module, or process: a place a careful editor would miss.
 - **Silent.** Missing the second edit produces no error, no crash, no red build. Just wrong behavior.
 
 **What does not earn a code:**
@@ -27,9 +27,9 @@ A PACS code marks an invariant that has all three of these properties:
 
 ## 2. The three pieces
 
-**The code.** A stable identifier, `PACS0001` through `PACS0099`. Append-only. Never reuse a number.
+**The code.** A stable identifier, `PACS0001` and up (see §6). Append-only. Never reuse a number; mark a dead entry `retired: true`.
 **The registry.** One ````yaml` block in a durable file (`AGENTS.md`). This is the source of truth.
-**The tag.** A comment (`// PACS0001`) placed at the exact anchor the invariant governs.
+**The tag.** A comment in the §4 format, placed at the exact anchor the invariant governs.
 
 ## 3. The YAML registry format
 
@@ -46,7 +46,6 @@ PACS0001:
     - "src/validate.js"
   fails_silently: "New unit type renders blank or its orders get dropped before the engine runs"
   justification: "Four independent keyed-by-type sites, none derived from UNITS, so nothing forces them to stay in sync"
-  verify: "scripts/pacs/verify_0001.sh"  # Optional executable predicate
 ```
 ```
 
@@ -55,7 +54,9 @@ PACS0001:
 - **sync_with**: Array of file paths that must be kept in sync. **This list is known, not exhaustive** — see below.
 - **fails_silently**: The concrete wrong behavior if missed.
 - **justification**: A specific consequence. Must not be generic fluff ("could break things").
-- **verify** *(Optional)*: A path to an executable bash/node/python script (exit 0 = pass, non-zero = fail) that programmatically enforces the invariant.
+- **retired** *(Optional)*: `true` when the invariant is gone. The entry stays so its number is never reused, and the linter skips it.
+
+`anchor` and `sync_with` items are a file path, optionally followed by `:symbol`. An item holding `<...>` is a placeholder for a generated path. Other keys are allowed and ignored by the linter.
 
 ### sync_with is a floor, not a ceiling
 
@@ -93,7 +94,7 @@ Zero-padded to four digits, so they sort and grep cleanly.
 
 ## 7. The report line and the greencheck
 
-When you finish a change, name the PACS codes you touched or minted in your commit body or report.
+When you finish a change, name the PACS codes you opened, touched or minted in your commit body or report, and where you confirmed the touch-points. "Opened PACS0001, confirmed atlas.js and validate.js, added dispatch.js" can be checked. "Codes touched: PACS0001" cannot.
 
 **The Greencheck:** Whenever an agent consults the registry while producing a response, it opens that response with `P.A.C.S ✅` on its own line. 
 
@@ -102,7 +103,7 @@ When you finish a change, name the PACS codes you touched or minted in your comm
 PACS is completely modular. You only install what you want:
 
 1. **The Core (Zero-install)**: Just `AGENTS.md` and this specification. The LLM reads the YAML and follows the rules.
-2. **The Linter (Opt-in Verification)**: Run `bin/pacs check` locally or in CI. It mechanically verifies the YAML schema, catches orphaned tags, checks dead paths, and runs your optional `verify:` scripts.
-3. **The Hooks (Opt-in Enforcement)**: Use `pacs-hooks/` if you use Claude Code and want to strictly block it from acting before reading the registry.
+2. **The Linter (Opt-in Verification)**: Run `bin/pacs check` locally or in CI. It checks required fields, entries with no tag, tags with no entry, and dead paths.
+3. **The Hooks (Opt-in Enforcement)**: Use `pacs-hooks/` if you use Claude Code and want edits blocked until the governing registry has been read.
 
 You can run `bin/pacs check` right now to verify your registry health. See `bin/pacs --help` for commands.

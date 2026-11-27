@@ -4,8 +4,8 @@ const UNITS = { worker: {}, vehicle: {}, triangle: {} }
 // PACS0003 — every sfx(name) needs a key here — AGENTS.md
 const SOUNDS = { chat: 'chat.mp3', coreHit: 'corehit.mp3' }
 
-// PACS0004 — verify script test anchor — AGENTS.md
-const VERIFY_FAIL = true
+// PACS0004 — tag left behind after its anchor file moved — AGENTS.md
+const THING = true
 
 // PACS9999 — this tag has no registry row (dangling!) — AGENTS.md
 const DANGLING_EXAMPLE = true

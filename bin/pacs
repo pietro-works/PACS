@@ -3,7 +3,7 @@
 #
 # Machine-verifiable parity checking for the Petrus Agentic Coupling System.
 #
-# Dependencies: bash ≥4, rg ≥13, yq ≥4
+# Dependencies: bash 3.2+, rg ≥13, yq ≥4
 #
 # Usage:
 #   pacs check  [--project-dir PATH]    Run all parity checks
@@ -75,8 +75,6 @@ source "${PACS_LIB_DIR}/validate.sh"
 source "${PACS_LIB_DIR}/check_orphans.sh"
 source "${PACS_LIB_DIR}/check_dangling.sh"
 source "${PACS_LIB_DIR}/check_paths.sh"
-source "${PACS_LIB_DIR}/check_justifications.sh"
-source "${PACS_LIB_DIR}/check_verify.sh"
 
 # ── Commands ─────────────────────────────────────────────────────────
 
@@ -112,77 +110,24 @@ cmd_check() {
   local check_count=0
   local fail_count=0
 
-  # Step 2: Schema validation
-  check_count=$((check_count + 1))
-  local schema_errors
-  schema_errors=$(pacs_validate_schema "$yaml" 2>&1) || true
-  if [[ -n "$schema_errors" ]]; then
-    all_errors+="$schema_errors"
-    fail_count=$((fail_count + 1))
-    echo "  ${RED}✗${RESET} Schema validation"
-  else
-    echo "  ${GREEN}✓${RESET} Schema validation"
-  fi
-
-  # Step 3: Orphaned rows
-  check_count=$((check_count + 1))
-  local orphan_errors
-  orphan_errors=$(pacs_check_orphans "$yaml" "$project_dir" 2>&1) || true
-  if [[ -n "$orphan_errors" ]]; then
-    all_errors+="$orphan_errors"
-    fail_count=$((fail_count + 1))
-    echo "  ${RED}✗${RESET} Orphaned rows"
-  else
-    echo "  ${GREEN}✓${RESET} Orphaned rows"
-  fi
-
-  # Step 4: Dangling tags
-  check_count=$((check_count + 1))
-  local dangling_errors
-  dangling_errors=$(pacs_check_dangling "$yaml" "$project_dir" 2>&1) || true
-  if [[ -n "$dangling_errors" ]]; then
-    all_errors+="$dangling_errors"
-    fail_count=$((fail_count + 1))
-    echo "  ${RED}✗${RESET} Dangling tags"
-  else
-    echo "  ${GREEN}✓${RESET} Dangling tags"
-  fi
-
-  # Step 5: Dead paths
-  check_count=$((check_count + 1))
-  local path_errors
-  path_errors=$(pacs_check_paths "$yaml" "$project_dir" 2>&1) || true
-  if [[ -n "$path_errors" ]]; then
-    all_errors+="$path_errors"
-    fail_count=$((fail_count + 1))
-    echo "  ${RED}✗${RESET} Dead paths"
-  else
-    echo "  ${GREEN}✓${RESET} Dead paths"
-  fi
-
-  # Step 6: Hollow justifications
-  check_count=$((check_count + 1))
-  local just_errors
-  just_errors=$(pacs_check_justifications "$yaml" 2>&1) || true
-  if [[ -n "$just_errors" ]]; then
-    all_errors+="$just_errors"
-    fail_count=$((fail_count + 1))
-    echo "  ${RED}✗${RESET} Justification quality"
-  else
-    echo "  ${GREEN}✓${RESET} Justification quality"
-  fi
-
-  # Step 7: Verify scripts
-  check_count=$((check_count + 1))
-  local verify_errors
-  verify_errors=$(pacs_check_verify "$yaml" "$project_dir" 2>&1) || true
-  if [[ -n "$verify_errors" ]]; then
-    all_errors+="$verify_errors"
-    fail_count=$((fail_count + 1))
-    echo "  ${RED}✗${RESET} Executable predicates"
-  else
-    echo "  ${GREEN}✓${RESET} Executable predicates"
-  fi
+  # One line per check; findings are collected and printed at the end.
+  run_step() { # LABEL FUNCTION ARGS...
+    local label="$1" out
+    shift
+    out=$("$@" 2>&1) || true
+    check_count=$((check_count + 1))
+    if [[ -n "$out" ]]; then
+      all_errors+="$out"$'\n'
+      fail_count=$((fail_count + 1))
+      echo "  ${RED}✗${RESET} $label"
+    else
+      echo "  ${GREEN}✓${RESET} $label"
+    fi
+  }
+  run_step "Schema validation" pacs_validate_schema "$yaml"
+  run_step "Orphaned rows" pacs_check_orphans "$yaml" "$project_dir"
+  run_step "Dangling tags" pacs_check_dangling "$yaml" "$project_dir"
+  run_step "Dead paths" pacs_check_paths "$yaml" "$project_dir"
 
   # Summary
   echo ""
@@ -190,7 +135,7 @@ cmd_check() {
     echo "${RED}${BOLD}FAIL${RESET} — $fail_count/$check_count checks failed"
     echo ""
     echo "${DIM}──── Findings ────${RESET}"
-    printf '%s\n' "$all_errors"
+    printf '%s' "$all_errors"
     exit 1
   else
     local code_count
@@ -232,7 +177,6 @@ Registry of load-bearing invariants for this project, following PACS.
 #     - "src/other.ts"
 #   fails_silently: "describe the silent failure"
 #   justification: "concrete, specific reason unique to this coupling"
-#   verify: "scripts/pacs/verify_0001.sh"  # optional
 ```
 TEMPLATE
   fi
@@ -286,10 +230,10 @@ cmd_report() {
   echo "${DIM}${project_dir}/AGENTS.md${RESET}"
   echo ""
 
-  local total active retired with_verify code_tier process_tier
+  local total active retired code_tier process_tier
   total=$(printf '%s\n' "$yaml" | yq -r '(. // {}) | keys | length' 2>/dev/null || echo 0)
 
-  active=0; retired=0; with_verify=0; code_tier=0; process_tier=0
+  active=0; retired=0; code_tier=0; process_tier=0
 
   local codes
   codes=$(printf '%s\n' "$yaml" | yq -r '(. // {}) | keys | .[]' 2>/dev/null) || true
@@ -303,10 +247,6 @@ cmd_report() {
       else
         active=$((active + 1))
       fi
-
-      local verify_cmd
-      verify_cmd=$(printf '%s\n' "$yaml" | yq -r ".\"$code\".verify // \"\"" 2>/dev/null)
-      [[ -n "$verify_cmd" ]] && with_verify=$((with_verify + 1))
 
       local num="${code#PACS}"
       # 10# forces base 10 — 0008/0009 are not valid octal.
@@ -323,12 +263,6 @@ cmd_report() {
   echo "  Retired:        $retired"
   echo "  Code tier:      $code_tier  ${DIM}(0001-0099, carry tags)${RESET}"
   echo "  Process tier:   $process_tier  ${DIM}(0100+, prose only)${RESET}"
-  echo "  With verify:    $with_verify  ${DIM}(executable predicates)${RESET}"
-
-  if [[ $active -gt 0 && $with_verify -gt 0 ]]; then
-    local pct=$(( (with_verify * 100) / active ))
-    echo "  Verify coverage: ${pct}%"
-  fi
 }
 
 # ── Argument parsing ─────────────────────────────────────────────────
